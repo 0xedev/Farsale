@@ -1,5 +1,6 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
+const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers");
 
 describe("Presale Platform", function () {
   let owner, user1, user2, user3;
@@ -20,22 +21,21 @@ describe("Presale Platform", function () {
     softCap: ethers.parseEther("2.5"),
     max: ethers.parseEther("2"),
     min: ethers.parseEther("0.1"),
-    start: Math.floor(Date.now() / 1000) + 60, // Starts in 60 seconds
-    end: Math.floor(Date.now() / 1000) + 3600, // Ends in 1 hour
-    liquidityBps: 5100, // 51%
-    slippageBps: 200, // 2%
-    presaleRate: ethers.parseUnits("100", 0), // 100 tokens per ETH
-    listingRate: ethers.parseUnits("50", 0), // 50 tokens per ETH
-    lockupDuration: 30 * 24 * 60 * 60, // 30 days
-    currency: ethers.ZeroAddress, // ETH
+    start: Math.floor(Date.now() / 1000) + 60,
+    end: Math.floor(Date.now() / 1000) + 3600,
+    liquidityBps: 5100,
+    slippageBps: 200,
+    presaleRate: ethers.parseUnits("100", 0),
+    listingRate: ethers.parseUnits("50", 0),
+    lockupDuration: 30 * 24 * 60 * 60,
+    currency: ethers.ZeroAddress,
   };
-  const presaleOptionsStable = { ...presaleOptionsETH, currency: null }; // Set later with USDC address
+  const presaleOptionsStable = { ...presaleOptionsETH, currency: null };
 
   before(async function () {
     accounts = await ethers.getSigners();
     [owner, user1, user2, user3] = accounts.slice(0, 4);
 
-    // Deploy mock contracts
     Token = await ethers.getContractFactory("Token");
     token = await Token.deploy(ethers.parseEther("10000"), "TestToken", "TTK");
     await token.waitForDeployment();
@@ -44,7 +44,7 @@ describe("Presale Platform", function () {
     weth = await WETH.deploy();
     await weth.waitForDeployment();
 
-    Token = await ethers.getContractFactory("Token"); // Reuse Token for USDC
+    Token = await ethers.getContractFactory("Token");
     usdc = await Token.deploy(ethers.parseEther("10000"), "USD Coin", "USDC");
     await usdc.waitForDeployment();
     presaleOptionsStable.currency = usdc.target;
@@ -52,12 +52,11 @@ describe("Presale Platform", function () {
     MockUniswapV2Router = await ethers.getContractFactory(
       "MockUniswapV2Router"
     );
-    router = await MockUniswapV2Router.deploy();
+    router = await MockUniswapV2Router.deploy(weth.target, weth.target);
     await router.waitForDeployment();
 
-    // Deploy PresaleFactory
     PresaleFactory = await ethers.getContractFactory("PresaleFactory");
-    factory = await PresaleFactory.deploy(creationFee, ethers.ZeroAddress); // ETH fee
+    factory = await PresaleFactory.deploy(creationFee, ethers.ZeroAddress);
     await factory.waitForDeployment();
 
     locker = await ethers.getContractAt(
@@ -125,22 +124,38 @@ describe("Presale Platform", function () {
       expect(await presaleETH.pool().state).to.equal(2);
     });
 
-    it("should accept ETH contributions", async function () {
+    it("should accept ETH contributions and track them", async function () {
       await token.approve(presaleETH.target, presaleOptionsETH.tokenDeposit);
       await presaleETH.deposit();
       await ethers.provider.send("evm_increaseTime", [60]);
       await ethers.provider.send("evm_mine");
 
-      const contribution = ethers.parseEther("1");
+      const contribution1 = ethers.parseEther("1");
       await expect(() =>
-        presaleETH.connect(user1).contribute({ value: contribution })
+        presaleETH.connect(user1).contribute({ value: contribution1 })
       ).to.changeEtherBalances(
         [user1, presaleETH],
-        [-contribution, contribution]
+        [-contribution1, contribution1]
       );
       expect(await presaleETH.contributions(user1.address)).to.equal(
-        contribution
+        contribution1
       );
+      expect(await presaleETH.getContributorCount()).to.equal(1);
+      expect(await presaleETH.getTotalContributed()).to.equal(contribution1);
+
+      const contribution2 = ethers.parseEther("0.5");
+      await presaleETH.connect(user2).contribute({ value: contribution2 });
+      expect(await presaleETH.contributions(user2.address)).to.equal(
+        contribution2
+      );
+      expect(await presaleETH.getContributorCount()).to.equal(2);
+      expect(await presaleETH.getTotalContributed()).to.equal(
+        contribution1 + contribution2
+      );
+
+      const contributors = await presaleETH.getContributors();
+      expect(contributors).to.include(user1.address);
+      expect(contributors).to.include(user2.address);
     });
 
     it("should enforce whitelist with many users", async function () {
@@ -148,7 +163,7 @@ describe("Presale Platform", function () {
       await presaleETH.deposit();
       await presaleETH.toggleWhitelist(true);
 
-      const whitelistUsers = accounts.slice(0, 200).map((acc) => acc.address); // Use 200 accounts
+      const whitelistUsers = accounts.slice(0, 200).map((acc) => acc.address);
       await presaleETH.updateWhitelist(whitelistUsers, true);
 
       await ethers.provider.send("evm_increaseTime", [60]);
@@ -208,7 +223,7 @@ describe("Presale Platform", function () {
       await ethers.provider.send("evm_increaseTime", [60]);
       await ethers.provider.send("evm_mine");
 
-      const contribution = ethers.parseEther("1"); // Below soft cap
+      const contribution = ethers.parseEther("1");
       await presaleETH.connect(user1).contribute({ value: contribution });
       await ethers.provider.send("evm_increaseTime", [3600]);
       await ethers.provider.send("evm_mine");
@@ -239,7 +254,7 @@ describe("Presale Platform", function () {
       );
     });
 
-    it("should accept stablecoin contributions", async function () {
+    it("should accept stablecoin contributions and track them", async function () {
       await token.approve(
         presaleStable.target,
         presaleOptionsStable.tokenDeposit
@@ -248,13 +263,31 @@ describe("Presale Platform", function () {
       await ethers.provider.send("evm_increaseTime", [60]);
       await ethers.provider.send("evm_mine");
 
-      const contribution = ethers.parseEther("1");
-      await usdc.transfer(user1.address, contribution);
-      await usdc.connect(user1).approve(presaleStable.target, contribution);
-      await presaleStable.connect(user1).contributeStablecoin(contribution);
+      const contribution1 = ethers.parseEther("1");
+      await usdc.transfer(user1.address, contribution1);
+      await usdc.connect(user1).approve(presaleStable.target, contribution1);
+      await presaleStable.connect(user1).contributeStablecoin(contribution1);
       expect(await presaleStable.contributions(user1.address)).to.equal(
-        contribution
+        contribution1
       );
+      expect(await presaleStable.getContributorCount()).to.equal(1);
+      expect(await presaleStable.getTotalContributed()).to.equal(contribution1);
+
+      const contribution2 = ethers.parseEther("0.5");
+      await usdc.transfer(user2.address, contribution2);
+      await usdc.connect(user2).approve(presaleStable.target, contribution2);
+      await presaleStable.connect(user2).contributeStablecoin(contribution2);
+      expect(await presaleStable.contributions(user2.address)).to.equal(
+        contribution2
+      );
+      expect(await presaleStable.getContributorCount()).to.equal(2);
+      expect(await presaleStable.getTotalContributed()).to.equal(
+        contribution1 + contribution2
+      );
+
+      const contributors = await presaleStable.getContributors();
+      expect(contributors).to.include(user1.address);
+      expect(contributors).to.include(user2.address);
     });
 
     it("should finalize and lock liquidity with stablecoin", async function () {
@@ -276,7 +309,4 @@ describe("Presale Platform", function () {
       expect(lockCount).to.be.gt(0);
     });
   });
-
-  const anyValue = () =>
-    ethers.toBeHex(ethers.toBigInt(Math.floor(Date.now() / 1000)));
 });

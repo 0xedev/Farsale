@@ -57,6 +57,7 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
 
     mapping(address => uint256) public contributions;
     mapping(address => bool) public whitelist;
+    address[] public contributors;
     Pool public pool;
 
     error ContractPaused();
@@ -86,7 +87,8 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
     event Withdrawn(address indexed owner, uint256 amount);
     event WhitelistToggled(bool enabled);
     event WhitelistUpdated(address indexed contributor, bool added);
-
+    event Contribution(address indexed contributor, uint256 amount, bool isETH); 
+    
     modifier whenNotPaused() {
         if (paused) revert ContractPaused();
         _;
@@ -98,7 +100,7 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
         _;
     }
 
-    constructor(
+     constructor(
         address _weth,
         address _token,
         address _uniswapV2Router02,
@@ -114,7 +116,7 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
         pool = Pool({
             token: ERC20(_token),
             uniswapV2Router02: IUniswapV2Router02(_uniswapV2Router02),
-            factory: IUniswapV2Router02(_uniswapV2Router02).factory(), // Initialize factory
+            factory: IUniswapV2Router02(_uniswapV2Router02).factory(),
             tokenBalance: 0,
             tokensClaimable: 0,
             tokensLiquidity: 0,
@@ -125,12 +127,48 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
         });
     }
 
+    function contribute() external payable whenNotPaused {
+        if (pool.options.currency != address(0)) revert ETHNotAccepted();
+        if (pool.state != 2) revert NotActive();
+        uint256 tokenAmount = userTokens(msg.sender) + ((msg.value * pool.options.presaleRate * 10**pool.token.decimals()) / 10**18);
+        if (tokenAmount == 0) revert ZeroTokensForContribution();
+        _purchase(msg.sender, msg.value);
+        _trackContribution(msg.sender, msg.value, true);
+    }
+
     receive() external payable whenNotPaused {
         if (pool.options.currency != address(0)) revert ETHNotAccepted();
         if (pool.state != 2) revert NotActive();
         uint256 tokenAmount = userTokens(msg.sender) + ((msg.value * pool.options.presaleRate * 10**pool.token.decimals()) / 10**18);
         if (tokenAmount == 0) revert ZeroTokensForContribution();
         _purchase(msg.sender, msg.value);
+        _trackContribution(msg.sender, msg.value, true);
+    }
+
+    // New tracking function
+    function _trackContribution(address _contributor, uint256 _amount, bool _isETH) private {
+        if (contributions[_contributor] == 0) {
+            contributors.push(_contributor); // Add new contributor
+        }
+        contributions[_contributor] += _amount; // Update contribution amount
+        emit Contribution(_contributor, _amount, _isETH); // Emit event
+    }
+
+    // View functions for tracking
+    function getContributorCount() external view returns (uint256) {
+        return contributors.length;
+    }
+
+    function getContributors() external view returns (address[] memory) {
+        return contributors;
+    }
+
+    function getTotalContributed() external view returns (uint256) {
+        return pool.weiRaised; // Already tracked in pool.weiRaised
+    }
+
+    function getContribution(address _contributor) external view returns (uint256) {
+        return contributions[_contributor];
     }
 
     function contributeStablecoin(uint256 _amount) external whenNotPaused {
