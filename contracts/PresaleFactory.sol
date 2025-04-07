@@ -21,6 +21,7 @@ contract PresaleFactory is Ownable {
         creationFee = _creationFee;
         feeToken = _feeToken;
         liquidityLocker = new LiquidityLocker();
+        liquidityLocker.transferOwnership(address(this));
     }
 
     function createPresale(

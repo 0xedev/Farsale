@@ -287,6 +287,7 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
             IERC20(pool.options.currency).safeApprove(address(pool.uniswapV2Router02), 0);
         }
         pool.token.safeApprove(address(pool.uniswapV2Router02), 0);
+        require(pair != address(0), "LiquificationFailed");
 
         // Lock LP tokens with LiquidityLocker
         IERC20 lpToken = IERC20(pair);
@@ -326,11 +327,11 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
         return (contributions[_contributor] * pool.options.presaleRate * 10**tokenDecimals) / 10**currencyDecimals;
     }
 
-    function _tokensForLiquidity() private view returns (uint256) {
-        uint256 currencyDecimals = pool.options.currency == address(0) ? 18 : IERC20(pool.options.currency).decimals();
-        uint256 tokenDecimals = IERC20(pool.token).decimals();
-        return ((pool.options.hardCap * pool.options.liquidityBps / BASIS_POINTS) * pool.options.listingRate * 10**tokenDecimals) / 10**currencyDecimals;
-    }
+   function _tokensForLiquidity() private view returns (uint256) {
+    uint256 currencyDecimals = pool.options.currency == address(0) ? 18 : IERC20(pool.options.currency).decimals();
+    uint256 tokenDecimals = IERC20(pool.token).decimals();
+    return ((pool.options.hardCap * pool.options.liquidityBps / BASIS_POINTS) * pool.options.listingRate * 10**tokenDecimals) / 10**currencyDecimals;
+}
 
     function _tokensForPresale() private view returns (uint256) {
         uint256 currencyDecimals = pool.options.currency == address(0) ? 18 : IERC20(pool.options.currency).decimals();
