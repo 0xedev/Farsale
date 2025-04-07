@@ -9,6 +9,8 @@ pragma solidity ^0.8.24;
  * operations in the context of a presale event.
  */
 interface IPresale {
+
+ 
     
     /**
      * @dev Emitted when an unauthorized address attempts an action requiring specific permissions.
@@ -90,53 +92,53 @@ interface IPresale {
     /**
      * @dev Emitted when the presale contract owner deposits tokens for sale.
      * This is usually done before the presale starts to ensure tokens are available for purchase.
-     * @param creator Address of the contract owner who performs the deposit.
+     * @param sender Address of the contract owner who performs the deposit.
      * @param amount Amount of tokens deposited.
      * @param timestamp Block timestamp when the deposit occurred.
      */
-    event Deposit(address indexed creator, uint256 amount, uint256 timestamp);
+    event Deposit(address indexed sender, uint256 amount, uint256 timestamp);
 
     /**
      * @dev Emitted for each purchase made during the presale. Tracks the buyer, the amount of ETH contributed,
      * and the amount of tokens purchased.
-     * @param beneficiary Address of the participant who made the purchase.
-     * @param contribution Amount of ETH contributed by the participant.
+     * @param buyer Address of the participant who made the purchase.
+     * @param amount Amount of ETH contributed by the participant.
      */
-    event Purchase(address indexed beneficiary, uint256 contribution);
+    event Purchase(address indexed buyer, uint256 amount);
 
     /**
      * @dev Emitted when the presale is successfully finalized. Finalization may involve distributing tokens,
      * transferring raised funds to a designated wallet, and/or enabling token claim functionality.
-     * @param creator Address of the contract owner who finalized the presale.
-     * @param amount Total amount of ETH raised in the presale.
+     * @param owner Address of the contract owner who finalized the presale.
+     * @param amountRaised Total amount of ETH raised in the presale.
      * @param timestamp Block timestamp when the finalization occurred.
      */
-    event Finalized(address indexed creator, uint256 amount, uint256 timestamp);
+    event Finalized(address indexed owner, uint256 amountRaised, uint256 timestamp);
 
     /**
      * @dev Emitted when a participant successfully claims a refund. This is typically allowed when the presale
      * is cancelled or does not meet its funding goals.
-     * @param beneficiary Address of the participant receiving the refund.
+     * @param contributor Address of the participant receiving the refund.
      * @param amount Amount of wei refunded.
      * @param timestamp Block timestamp when the refund occurred.
      */
-    event Refund(address indexed beneficiary, uint256 amount, uint256 timestamp);
+    event Refund(address indexed contributor, uint256 amount, uint256 timestamp);
 
     /**
      * @dev Emitted when participants claim their purchased tokens after the presale is finalized. 
-     * @param beneficiary Address of the participant claiming tokens.
+     * @param claimer Address of the participant claiming tokens.
      * @param amount Amount of tokens claimed.
      * @param timestamp Block timestamp when the claim occurred.
      */
-    event TokenClaim(address indexed beneficiary, uint256 amount, uint256 timestamp);
+    event TokenClaim(address indexed claimer, uint256 amount, uint256 timestamp);
 
     /**
      * @dev Emitted when the presale is cancelled by the contract owner. A cancellation may allow participants
      * to claim refunds for their contributions.
-     * @param creator Address of the contract owner who cancelled the presale.
+     * @param owner Address of the contract owner who cancelled the presale.
      * @param timestamp Block timestamp when the cancellation occurred.
      */
-    event Cancel(address indexed creator, uint256 timestamp);
+    event Cancel(address indexed owner, uint256 timestamp);
 
     /**
      * @dev Allows for the deposit of presale tokens by the owner.
