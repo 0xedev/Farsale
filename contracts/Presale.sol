@@ -60,6 +60,32 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
     mapping(address => bool) public whitelist;
     Pool public pool;
 
+    // Custom errors
+    error ContractPaused();
+    error InvalidState();
+    error ETHNotAccepted();
+    error StablecoinNotAccepted();
+    error NotActive();
+    error SoftCapNotReached();
+    error ClaimPeriodExpired();
+    error NoTokensToClaim();
+    error InsufficientTokenBalance();
+    error NoFundsToRefund();
+    error InsufficientContractBalance();
+    error InvalidContributorAddress();
+    error NotInPurchasePeriod();
+    error HardCapExceeded();
+    error BelowMinimumContribution();
+    error ExceedsMaximumContribution();
+    error NotWhitelisted();
+    error InvalidAddress();
+    error CannotRescuePresaleTokens();
+    error AlreadyPaused();
+    error NotPaused();
+    error ZeroTokensForContribution();
+    error LiquificationFailed();
+    error InvalidInitialization();
+
     event Paused(address indexed account);
     event Unpaused(address indexed account);
     event TokensRescued(address indexed token, address indexed to, uint256 amount);
@@ -68,15 +94,13 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
     event WhitelistUpdated(address indexed contributor, bool added);
 
     modifier whenNotPaused() {
-        require(!paused, "Contract is paused");
+        if (paused) revert ContractPaused();
         _;
     }
 
     modifier onlyRefundable() {
-        require(
-            pool.state == 3 || (block.timestamp > pool.options.end && pool.weiRaised < pool.options.softCap),
-            "Not refundable"
-        );
+        if (!(pool.state == 3 || (block.timestamp > pool.options.end && pool.weiRaised < pool.options.softCap))) 
+            revert NotRefundable();
         _;
     }
 
@@ -88,10 +112,8 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
         address _creator,
         address _liquidityLocker
     ) Ownable(_creator) {
-        require(_weth != address(0), "WETH address cannot be zero");
-        require(_token != address(0), "Token address cannot be zero");
-        require(_uniswapV2Router02 != address(0), "Router address cannot be zero");
-        require(_liquidityLocker != address(0), "Locker address cannot be zero");
+        if (_weth == address(0) || _token == address(0) || _uniswapV2Router02 == address(0) || _liquidityLocker == address(0)) 
+            revert InvalidInitialization();
         _prevalidatePool(_options);
 
         liquidityLocker = LiquidityLocker(_liquidityLocker);
@@ -109,20 +131,22 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
     }
 
     receive() external payable whenNotPaused {
-        require(pool.options.currency == address(0), "ETH not accepted");
-        require(pool.state == 2, "Presale not active");
+        if (pool.options.currency != address(0)) revert ETHNotAccepted();
+        if (pool.state != 2) revert NotActive();
+        uint256 tokenAmount = userTokens(msg.sender) + ((msg.value * pool.options.presaleRate * 10**IERC20(pool.token).decimals()) / 10**18);
+        if (tokenAmount == 0) revert ZeroTokensForContribution();
         _purchase(msg.sender, msg.value);
     }
 
     function contributeStablecoin(uint256 _amount) external whenNotPaused {
-        require(pool.options.currency != address(0), "Stablecoin not accepted");
-        require(pool.state == 2, "Presale not active");
+        if (pool.options.currency == address(0)) revert StablecoinNotAccepted();
+        if (pool.state != 2) revert NotActive();
         IERC20(pool.options.currency).safeTransferFrom(msg.sender, address(this), _amount);
         _purchase(msg.sender, _amount);
     }
 
     function deposit() external onlyOwner whenNotPaused returns (uint256) {
-        require(pool.state == 1, "Presale must be initialized");
+        if (pool.state != 1) revert InvalidState();
         uint256 amount = pool.options.tokenDeposit;
         pool.token.safeTransferFrom(msg.sender, address(this), amount);
         pool.state = 2;
@@ -134,8 +158,8 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
     }
 
     function finalize() external onlyOwner whenNotPaused returns (bool) {
-        require(pool.state == 2, "Presale must be active");
-        require(pool.weiRaised >= pool.options.softCap, "Soft cap not reached");
+        if (pool.state != 2) revert InvalidState();
+        if (pool.weiRaised < pool.options.softCap) revert SoftCapNotReached();
 
         pool.state = 4;
         uint256 liquidityAmount = _weiForLiquidity();
@@ -149,7 +173,7 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
     }
 
     function cancel() external nonReentrant onlyOwner whenNotPaused returns (bool) {
-        require(pool.state <= 2, "Cannot cancel after finalization");
+        if (pool.state > 2) revert InvalidState();
         pool.state = 3;
         if (pool.tokenBalance > 0) {
             uint256 amount = pool.tokenBalance;
@@ -161,11 +185,11 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
     }
 
     function claim() external nonReentrant whenNotPaused returns (uint256) {
-        require(pool.state == 4, "Presale must be finalized");
-        require(block.timestamp <= claimDeadline, "Claim period expired");
+        if (pool.state != 4) revert InvalidState();
+        if (block.timestamp > claimDeadline) revert ClaimPeriodExpired();
         uint256 amount = userTokens(msg.sender);
-        require(amount > 0, "No tokens to claim");
-        require(pool.tokenBalance >= amount, "Insufficient token balance");
+        if (amount == 0) revert NoTokensToClaim();
+        if (pool.tokenBalance < amount) revert InsufficientTokenBalance();
 
         pool.tokenBalance -= amount;
         contributions[msg.sender] = 0;
@@ -176,13 +200,9 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
 
     function refund() external nonReentrant onlyRefundable returns (uint256) {
         uint256 amount = contributions[msg.sender];
-        require(amount > 0, "No funds to refund");
-        require(
-            pool.options.currency == address(0)
-                ? address(this).balance >= amount
-                : IERC20(pool.options.currency).balanceOf(address(this)) >= amount,
-            "Insufficient balance"
-        );
+        if (amount == 0) revert NoFundsToRefund();
+        if (pool.options.currency == address(0) ? address(this).balance < amount : IERC20(pool.options.currency).balanceOf(address(this)) < amount)
+            revert InsufficientContractBalance();
 
         contributions[msg.sender] = 0;
         if (pool.options.currency == address(0)) {
@@ -196,7 +216,7 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
 
     function withdraw() external onlyOwner {
         uint256 amount = ownerBalance;
-        require(amount > 0, "No funds to withdraw");
+        if (amount == 0) revert NoFundsToRefund();
         ownerBalance = 0;
         if (pool.options.currency == address(0)) {
             payable(msg.sender).sendValue(amount);
@@ -207,8 +227,8 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
     }
 
     function rescueTokens(address _token, address _to, uint256 _amount) external onlyOwner {
-        require(_to != address(0), "Cannot rescue to zero address");
-        require(_token != address(pool.token) || pool.state >= 3, "Cannot rescue presale tokens before cancellation");
+        if (_to == address(0)) revert InvalidAddress();
+        if (_token == address(pool.token) && pool.state < 3) revert CannotRescuePresaleTokens();
         IERC20(_token).safeTransfer(_to, _amount);
         emit TokensRescued(_token, _to, _amount);
     }
@@ -220,20 +240,20 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
 
     function updateWhitelist(address[] calldata _addresses, bool _add) external onlyOwner {
         for (uint256 i = 0; i < _addresses.length; i++) {
-            require(_addresses[i] != address(0), "Invalid address");
+            if (_addresses[i] == address(0)) revert InvalidAddress();
             whitelist[_addresses[i]] = _add;
             emit WhitelistUpdated(_addresses[i], _add);
         }
     }
 
     function pause() external onlyOwner {
-        require(!paused, "Already paused");
+        if (paused) revert AlreadyPaused();
         paused = true;
         emit Paused(msg.sender);
     }
 
     function unpause() external onlyOwner {
-        require(paused, "Not paused");
+        if (!paused) revert NotPaused();
         paused = false;
         emit Unpaused(msg.sender);
     }
@@ -251,7 +271,7 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
 
     function _purchase(address _beneficiary, uint256 _amount) private {
         _prevalidatePurchase(_beneficiary, _amount);
-        if (whitelistEnabled) require(whitelist[_beneficiary], "Not whitelisted");
+        if (whitelistEnabled && !whitelist[_beneficiary]) revert NotWhitelisted();
         pool.weiRaised += _amount;
         contributions[_beneficiary] += _amount;
         emit Purchase(_beneficiary, _amount);
@@ -286,13 +306,12 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
             );
             IERC20(pool.options.currency).safeApprove(address(pool.uniswapV2Router02), 0);
         }
+        if (pair == address(0)) revert LiquificationFailed();
         pool.token.safeApprove(address(pool.uniswapV2Router02), 0);
-        require(pair != address(0), "LiquificationFailed");
 
-        // Lock LP tokens with LiquidityLocker
         IERC20 lpToken = IERC20(pair);
         uint256 lpAmount = lpToken.balanceOf(address(this));
-        require(lpAmount > 0, "No LP tokens to lock");
+        if (lpAmount == 0) revert LiquificationFailed();
         uint256 unlockTime = block.timestamp + pool.options.lockupDuration;
 
         lpToken.safeApprove(address(liquidityLocker), lpAmount);
@@ -301,23 +320,24 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
 
     function _prevalidatePurchase(address _beneficiary, uint256 _amount) private view {
         PresaleOptions memory opts = pool.options;
-        require(pool.state == 2, "Presale must be active");
-        require(_beneficiary != address(0), "Invalid contributor address");
-        require(block.timestamp >= opts.start && block.timestamp <= opts.end, "Not in purchase period");
-        require(pool.weiRaised + _amount <= opts.hardCap, "Hard cap exceeded");
-        require(_amount >= opts.min, "Below minimum contribution");
-        require(contributions[_beneficiary] + _amount <= opts.max, "Exceeds maximum contribution");
+        if (pool.state != 2) revert InvalidState();
+        if (_beneficiary == address(0)) revert InvalidContributorAddress();
+        if (block.timestamp < opts.start || block.timestamp > opts.end) revert NotInPurchasePeriod();
+        if (pool.weiRaised + _amount > opts.hardCap) revert HardCapExceeded();
+        if (_amount < opts.min) revert BelowMinimumContribution();
+        if (contributions[_beneficiary] + _amount > opts.max) revert ExceedsMaximumContribution();
     }
 
     function _prevalidatePool(PresaleOptions memory _options) private view {
-        require(_options.tokenDeposit > 0, "Token deposit must be positive");
-        require(_options.hardCap > 0 && _options.softCap >= _options.hardCap / 4, "Soft cap must be >= 25% of hard cap");
-        require(_options.max > 0 && _options.min > 0 && _options.min <= _options.max, "Invalid contribution limits");
-        require(_options.liquidityBps >= 5100 && _options.liquidityBps <= BASIS_POINTS, "Liquidity must be 51-100%");
-        require(_options.slippageBps <= 500, "Slippage must be <= 5%");
-        require(_options.presaleRate > 0 && _options.listingRate > 0 && _options.listingRate < _options.presaleRate, "Invalid rates");
-        require(_options.start >= block.timestamp && _options.end > _options.start, "Invalid timestamps");
-        require(_options.lockupDuration > 0, "Lockup duration must be positive");
+        if (_options.tokenDeposit == 0) revert InvalidInitialization();
+        if (_options.hardCap == 0 || _options.softCap < _options.hardCap / 4) revert InvalidInitialization();
+        if (_options.max == 0 || _options.min == 0 || _options.min > _options.max) revert InvalidInitialization();
+        if (_options.liquidityBps < 5100 || _options.liquidityBps > BASIS_POINTS) revert InvalidInitialization();
+        if (_options.slippageBps > 500) revert InvalidInitialization();
+        if (_options.presaleRate == 0 || _options.listingRate == 0 || _options.listingRate >= _options.presaleRate) 
+            revert InvalidInitialization();
+        if (_options.start < block.timestamp || _options.end <= _options.start) revert InvalidInitialization();
+        if (_options.lockupDuration == 0) revert InvalidInitialization();
     }
 
     function userTokens(address _contributor) public view returns (uint256) {
@@ -327,11 +347,11 @@ contract Presale is IPresale, Ownable, ReentrancyGuard {
         return (contributions[_contributor] * pool.options.presaleRate * 10**tokenDecimals) / 10**currencyDecimals;
     }
 
-   function _tokensForLiquidity() private view returns (uint256) {
-    uint256 currencyDecimals = pool.options.currency == address(0) ? 18 : IERC20(pool.options.currency).decimals();
-    uint256 tokenDecimals = IERC20(pool.token).decimals();
-    return ((pool.options.hardCap * pool.options.liquidityBps / BASIS_POINTS) * pool.options.listingRate * 10**tokenDecimals) / 10**currencyDecimals;
-}
+    function _tokensForLiquidity() private view returns (uint256) {
+        uint256 currencyDecimals = pool.options.currency == address(0) ? 18 : IERC20(pool.options.currency).decimals();
+        uint256 tokenDecimals = IERC20(pool.token).decimals();
+        return ((pool.options.hardCap * pool.options.liquidityBps / BASIS_POINTS) * pool.options.listingRate * 10**tokenDecimals) / 10**currencyDecimals;
+    }
 
     function _tokensForPresale() private view returns (uint256) {
         uint256 currencyDecimals = pool.options.currency == address(0) ? 18 : IERC20(pool.options.currency).decimals();

@@ -25,9 +25,18 @@ contract LiquidityLocker is Ownable {
 
     /// @notice Emitted when liquidity is locked
     event LiquidityLocked(address indexed token, uint256 amount, uint256 unlockTime, address indexed owner);
-
     /// @notice Emitted when liquidity is withdrawn
     event LiquidityWithdrawn(address indexed token, uint256 amount, address indexed owner);
+
+    // Custom errors
+    error InvalidTokenAddress();
+    error ZeroAmount();
+    error InvalidUnlockTime();
+    error InvalidOwnerAddress();
+    error InvalidLockId();
+    error NotLockOwner();
+    error TokensStillLocked();
+    error NoTokensToWithdraw();
 
     constructor() Ownable(msg.sender) {}
 
@@ -44,10 +53,10 @@ contract LiquidityLocker is Ownable {
         uint256 _unlockTime,
         address _owner
     ) external onlyOwner {
-        require(_token != address(0), "Invalid token address");
-        require(_amount > 0, "Amount must be positive");
-        require(_unlockTime > block.timestamp, "Unlock time must be in future");
-        require(_owner != address(0), "Invalid owner address");
+        if (_token == address(0)) revert InvalidTokenAddress();
+        if (_amount == 0) revert ZeroAmount();
+        if (_unlockTime <= block.timestamp) revert InvalidUnlockTime();
+        if (_owner == address(0)) revert InvalidOwnerAddress();
 
         IERC20(_token).safeTransferFrom(msg.sender, address(this), _amount);
         locks.push(Lock({
@@ -65,11 +74,11 @@ contract LiquidityLocker is Ownable {
      * @param _lockId Index of the lock to withdraw
      */
     function withdraw(uint256 _lockId) external {
-        require(_lockId < locks.length, "Invalid lock ID");
+        if (_lockId >= locks.length) revert InvalidLockId();
         Lock storage lock = locks[_lockId];
-        require(msg.sender == lock.owner, "Not lock owner");
-        require(block.timestamp >= lock.unlockTime, "Tokens still locked");
-        require(lock.amount > 0, "No tokens to withdraw");
+        if (msg.sender != lock.owner) revert NotLockOwner();
+        if (block.timestamp < lock.unlockTime) revert TokensStillLocked();
+        if (lock.amount == 0) revert NoTokensToWithdraw();
 
         uint256 amount = lock.amount;
         address token = lock.token;
@@ -85,7 +94,7 @@ contract LiquidityLocker is Ownable {
      * @return token, amount, unlockTime, owner
      */
     function getLock(uint256 _lockId) external view returns (address, uint256, uint256, address) {
-        require(_lockId < locks.length, "Invalid lock ID");
+        if (_lockId >= locks.length) revert InvalidLockId();
         Lock memory lock = locks[_lockId];
         return (lock.token, lock.amount, lock.unlockTime, lock.owner);
     }

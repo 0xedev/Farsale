@@ -15,6 +15,10 @@ contract PresaleFactory is Ownable {
     address[] public presales;
     LiquidityLocker public liquidityLocker;
 
+    // Custom errors
+    error InsufficientFee();
+    error ZeroFee();
+
     event PresaleCreated(address indexed creator, address indexed presale);
 
     constructor(uint256 _creationFee, address _feeToken) Ownable(msg.sender) {
@@ -31,7 +35,7 @@ contract PresaleFactory is Ownable {
         address _router
     ) external payable {
         if (feeToken == address(0)) {
-            require(msg.value >= creationFee, "Insufficient ETH fee");
+            if (msg.value < creationFee) revert InsufficientFee();
         } else {
             IERC20(feeToken).safeTransferFrom(msg.sender, address(this), creationFee);
         }
@@ -49,7 +53,7 @@ contract PresaleFactory is Ownable {
     }
 
     function setCreationFee(uint256 _fee) external onlyOwner {
-        require(_fee > 0, "Fee must be positive");
+        if (_fee == 0) revert ZeroFee();
         creationFee = _fee;
     }
 
